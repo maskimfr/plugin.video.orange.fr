@@ -9,6 +9,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlparse, quote
 from urllib.request import Request, urlopen
 import xbmcvfs
+from pathlib import Path
 
 from lib.providers.provider_interface import ProviderInterface
 from lib.utils import get_drm, get_global_setting, log, LogLevel, random_ua, get_addon_profile
@@ -17,6 +18,7 @@ from lib.utils import get_drm, get_global_setting, log, LogLevel, random_ua, get
 class OrangeTemplate(ProviderInterface):
     """This template helps creating providers based on the Orange architecture"""
     chunks_per_day: int = 2
+    cookie = Path(os.path.join(xbmcvfs.translatePath(get_addon_profile()), 'cookie')).read_text().replace('\n', '')
 
     def __init__(
         self,
@@ -31,13 +33,11 @@ class OrangeTemplate(ProviderInterface):
         self.groups = groups
 
     def get_stream_info(self, channel_id: int) -> dict:
-        res, cookie, tv_token = self._auth_urlopen(self.endpoint_stream_info.format(channel_id=channel_id), headers={
+        res, tv_token = self._auth_urlopen(self.endpoint_stream_info.format(channel_id=channel_id), headers={
             'User-Agent': random_ua(),
-            'Host': urlparse(self.endpoint_stream_info).netloc
+            'Host': urlparse(self.endpoint_stream_info).netloc,
+            'Cookie': self.cookie
         })
-
-        if res is None:
-            return False
 
         stream_info = json.loads(res)
 
@@ -48,7 +48,7 @@ class OrangeTemplate(ProviderInterface):
                 license_server_url = system.get('laUrl')
 
         headers = f'Content-Type=&User-Agent={random_ua()}&Host={urlparse(license_server_url).netloc}'
-        headers += f'&Cookie={quote(cookie)}&tv_token={quote(tv_token)}'
+        headers += f'&Cookie={quote(self.cookie)}&tv_token={quote(tv_token)}'
         post_data = 'R{SSM}'
         response = ''
 
@@ -168,18 +168,19 @@ class OrangeTemplate(ProviderInterface):
         req = Request("https://chaines-tv.orange.fr", headers={
             'User-Agent': random_ua(),
             'Host': 'chaines-tv.orange.fr',
+            'Cookie': self.cookie
         })
 
         with urlopen(req) as res:
             html = res.read().decode()
             nuxt = re.search('<script>(window.*?)</script>', html).expand(r'\1')
-            cookie = res.headers['Set-Cookie'].split(";")[0]
+            #cookie = res.headers['Set-Cookie'].split(";")[0]
             tv_token = 'Bearer ' + re.search('token:"(.*?)"', nuxt).expand(r'\1')
-            auth = {'timestamp': timestamp, 'cookie': cookie, 'tv_token': tv_token}
+            auth = {'timestamp': timestamp, 'tv_token': tv_token}
             with open(filepath, 'w', encoding='UTF-8') as file:
                 file.write(json.dumps(auth))
 
-        return nuxt, cookie, tv_token
+        return nuxt, tv_token
 
     def _auth_urlopen(self, url: str, headers: dict = None) -> tuple:
         if headers is None:
@@ -193,29 +194,26 @@ class OrangeTemplate(ProviderInterface):
         except FileNotFoundError:
             auth = {'timestamp': timestamp}
 
-        for _ in range(2):
-            if 'cookie' in auth:
-                headers['cookie'] = auth['cookie']
+        for _ in range(1):
+            if 'tv_token' in auth:
+                headers['cookie'] = self.cookie
                 headers['tv_token'] = auth['tv_token']
                 req = Request(url, headers=headers)
 
                 try:
                     with urlopen(req) as res:
                         if res.code == 200:
-                            return res.read(), auth['cookie'], auth['tv_token']
+                            return res.read(), auth['tv_token']
                 except HTTPError as error:
-                    if error.code == 403:
-                        log("Cette chaîne ne fait pas partie de votre offre.", LogLevel.INFO)
-                        break
-                    if error.code == 401:
+                    if error.code in (401, 403):
                         log(f"Cookie/token invalide, âge = {int(timestamp - auth['timestamp'])}", LogLevel.INFO)
                     else:
                         log(f"Erreur {error}", LogLevel.INFO)
                         raise
 
-            _, auth['cookie'], auth['tv_token'] = self._get_auth()
+            _, auth['tv_token'] = self._get_auth()
 
-        return None, None, None
+        return None
 
     def _get_programs(self, period_start: int = None, period_end: int = None) -> list:
         """Returns the programs for today (default) or the specified period"""
@@ -226,7 +224,8 @@ class OrangeTemplate(ProviderInterface):
 
         req = Request(self.endpoint_programs.format(period=period), headers={
             'User-Agent': random_ua(),
-            'Host': urlparse(self.endpoint_programs).netloc
+            'Host': urlparse(self.endpoint_programs).netloc,
+            'Cookie': self.cookie
         })
 
         with urlopen(req) as res:
