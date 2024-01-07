@@ -171,7 +171,7 @@ class OrangeTemplate(ProviderInterface):
             'Cookie': self.cookie
         })
 
-        with urlopen(req) as res:
+        with urlopen(req, timeout=20) as res:
             html = res.read().decode()
             nuxt = re.search('<script>(window.*?)</script>', html).expand(r'\1')
             #cookie = res.headers['Set-Cookie'].split(";")[0]
@@ -201,7 +201,7 @@ class OrangeTemplate(ProviderInterface):
                 req = Request(url, headers=headers)
 
                 try:
-                    with urlopen(req) as res:
+                    with urlopen(req, timeout=20) as res:
                         if res.code == 200:
                             return res.read(), auth['tv_token']
                 except HTTPError as error:
@@ -228,5 +228,5 @@ class OrangeTemplate(ProviderInterface):
             'Cookie': self.cookie
         })
 
-        with urlopen(req) as res:
+        with urlopen(req, timeout=20) as res:
             return json.loads(res.read())
